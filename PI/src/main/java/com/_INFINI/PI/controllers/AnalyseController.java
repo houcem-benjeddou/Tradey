@@ -3,8 +3,11 @@ package com._INFINI.PI.controllers;
 import com._INFINI.PI.services.AnalyseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -28,21 +31,33 @@ public class AnalyseController {
     }
     // Endpoint to fetch historical options data
     @GetMapping("/historical-options")
-    public String getHistoricalOptions(@RequestParam String symbol) {
-        return analyseService.getHistoricalOptions(symbol);
+    public ResponseEntity<?> getHistoricalOptions(@RequestParam String symbol) {
+        try {
+            // Wrap the response in ResponseEntity
+            String response = analyseService.getHistoricalOptions(symbol);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
     }
 
-
+    // Endpoint pour calculer l'évaluation du risque
     @GetMapping("/risk")
-    public String calculateRisk(@RequestParam String symbol) {
-        // Fetch historical options data
+    public ResponseEntity<Map<String, Object>> calculateRisk(@RequestParam String symbol) {
+        // Récupérer les données historiques des options
         String historicalData = analyseService.getHistoricalOptions(symbol);
 
-        // Calculate the risk
+        // Calculer le score de risque
         double riskScore = analyseService.calculateStockRisk(historicalData);
 
-        // Return the risk score
-        return "Risk Score for " + symbol + ": " + riskScore;
+        // Préparer une réponse JSON structurée
+        Map<String, Object> response = new HashMap<>();
+        response.put("symbol", symbol);
+        response.put("date", LocalDate.now().toString()); // Ajouter une date actuelle
+        response.put("value", riskScore); // Score calculé
+
+        // Retourner la réponse au format JSON
+        return ResponseEntity.ok(response);
     }
     //////analyse fondamentale
     @GetMapping("/api/basic-financials")

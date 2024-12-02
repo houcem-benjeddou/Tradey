@@ -1,9 +1,16 @@
 package com._INFINI.PI.services;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.BufferedReader;
@@ -17,10 +24,16 @@ import java.util.Map;
 
 @Service
 public class AnalyseService {
-    private final String API_KEY = "ct2b8nhr01qiurr3qr80ct2b8nhr01qiurr3qr8g";
-    private final String BASE_URL = "https://finnhub.io/api/v1";
-    private final String API_KEY_alpha = "I6VW80LJSG57TYG4";
-    private  final String FINNHUB_BASIC_FINANCIALS_URL = "https://finnhub.io/api/v1/stock/metric?symbol={symbol}&metric=all&token=" + API_KEY;
+
+    private static final String API_KEY = "ct2b8nhr01qiurr3qr80ct2b8nhr01qiurr3qr8g";
+    private static final String BASE_URL = "https://finnhub.io/api/v1";
+    private static final String API_KEY_ALPHA = "I6VW80LJSG57TYG4";
+    private static final String FINNHUB_BASIC_FINANCIALS_URL =
+            "https://finnhub.io/api/v1/stock/metric?symbol={symbol}&metric=all&token=" + API_KEY;
+
+    public AnalyseService(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     public Map<String, Object> getQuote(String symbol) {
         String url = BASE_URL + "/quote?symbol=" + symbol + "&token=" + API_KEY;
@@ -32,11 +45,9 @@ public class AnalyseService {
                 throw new RuntimeException("Empty response from quote API");
             }
 
-            // Convert JSON response to a Map for flexibility
             JSONObject jsonResponse = new JSONObject(response);
             return jsonResponse.toMap();
         } catch (Exception e) {
-            e.printStackTrace();
             throw new RuntimeException("Failed to fetch quote for symbol: " + symbol, e);
         }
     }
@@ -48,146 +59,136 @@ public class AnalyseService {
             String response = restTemplate.getForObject(url, String.class);
 
             if (response == null || response.isEmpty()) {
-                throw new RuntimeException("Empty response from recommendation API");
+                return Collections.emptyMap();
             }
 
-            // Convert JSON response to a Map for easy manipulation
             JSONArray jsonArray = new JSONArray(response);
             return jsonArray.length() > 0 ? jsonArray.getJSONObject(0).toMap() : Collections.emptyMap();
         } catch (Exception e) {
-            e.printStackTrace();
             throw new RuntimeException("Failed to fetch recommendation trends for symbol: " + symbol, e);
         }
     }
 
     public String getHistoricalOptions(String symbol) {
         try {
-            // Construct the API URL
-            String url = "https://www.alphavantage.co/query?function=HISTORICAL_OPTIONS&symbol="
-                    + symbol + "&apikey=" + API_KEY_alpha;
+            String url = "https://www.alphavantage.co/query?function=HISTORICAL_OPTIONS&symbol=" + symbol + "&apikey=" + API_KEY_ALPHA;
+            RestTemplate restTemplate = new RestTemplate();
+            String response = restTemplate.getForObject(url, String.class);
 
-            // Initialize the HTTP connection
-            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-            connection.setRequestMethod("GET");
+            // Parse and validate response
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(response);
 
-            // Check the response code
-            int responseCode = connection.getResponseCode();
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                // Read the response
-                BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String inputLine;
-
-                while ((inputLine = in.readLine()) != null) {
-                    response.append(inputLine);
-                }
-                in.close();
-
-                // Return the JSON response
-                return response.toString();
-            } else {
-                return "GET request failed. HTTP Code: " + responseCode;
+            // Check for API limitation message
+            if (root.has("Information")) {
+                throw new RuntimeException("API Usage Limit: " + root.get("Information").asText());
             }
 
+            // Your parsing logic here
+            return response;
         } catch (Exception e) {
-            e.printStackTrace();
-            return "Error: " + e.getMessage();
+            throw new RuntimeException("Failed to fetch historical options for: " + symbol, e);
         }
     }
-    /**
-     * Calculate the risk of a stock based on its historical options data.
-     *
-     * @param historicalData JSON response from the historical options API.
-     * @return The calculated risk score.
-     */
+
+
+    // Fonction de calcul du risque d'action
     public double calculateStockRisk(String historicalData) {
         try {
-            // Parse the JSON response
             JSONObject response = new JSONObject(historicalData);
             JSONArray data = response.getJSONArray("data");
 
-            // Initialize risk metrics
             double totalImpliedVolatility = 0;
             double totalGamma = 0;
 
-            // Loop through each option contract
             for (int i = 0; i < data.length(); i++) {
                 JSONObject option = data.getJSONObject(i);
-
-                // Extract implied volatility and gamma
-                double impliedVolatility = option.optDouble("implied_volatility", 0);
-                double gamma = option.optDouble("gamma", 0);
-
-                // Accumulate metrics
-                totalImpliedVolatility += impliedVolatility;
-                totalGamma += gamma;
+                totalImpliedVolatility += option.optDouble("implied_volatility", 0);
+                totalGamma += option.optDouble("gamma", 0);
             }
 
-            // Calculate averages
             int optionCount = data.length();
             double avgImpliedVolatility = totalImpliedVolatility / optionCount;
             double avgGamma = totalGamma / optionCount;
 
-            // Define a simple risk score formula
-            double riskScore = avgImpliedVolatility * (1 + avgGamma);
-
-            // Return the calculated risk score
-            return riskScore;
+            return avgImpliedVolatility * (1 + avgGamma);
 
         } catch (Exception e) {
-            e.printStackTrace();
             return -1; // Return -1 in case of an error
         }
     }
 
+    public Map<String, Object> getCompanyBasicFinancialsAndSave(String symbol) {
+        String url = FINNHUB_BASIC_FINANCIALS_URL.replace("{symbol}", symbol);
+        try {
+            RestTemplate restTemplate = new RestTemplate();
+            String response = restTemplate.getForObject(url, String.class);
+
+            if (response == null || response.isEmpty()) {
+                throw new RuntimeException("Empty response from financials API");
+            }
+
+            JSONObject jsonResponse = new JSONObject(response);
+            Map<String, Object> financialData = jsonResponse.toMap();
+            saveFinancialsToJson(financialData, symbol);
+
+            return financialData;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to fetch and save financials for symbol: " + symbol, e);
+        }
+    }
+
+    private void saveFinancialsToJson(Map<String, Object> financialData, String symbol) {
+        ObjectMapper mapper = new ObjectMapper();
+        File file = new File("src/main/resources/static/data/" + symbol + "_financials.json");
+        try {
+            if (!file.exists()) {
+                file.getParentFile().mkdirs();
+            }
+            mapper.writeValue(file, financialData);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to save financial data to JSON for symbol: " + symbol, e);
+        }
+    }
+
+    private final RestTemplate restTemplate;
+
+
+
+
     public String analyzeStockSentiment(String symbol) {
         try {
-            // Étape 1 : Récupérer les données sentimentales via Finnhub
-            String apiUrl = BASE_URL + "/news-sentiment?symbol=" + symbol + "&token=" + API_KEY;
-            HttpURLConnection connection = (HttpURLConnection) new URL(apiUrl).openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(5000);
+            String apiUrl = "https://finnhub.io/api/v1/news-sentiment?symbol=" + symbol + "&token=" + API_KEY;
 
-            int responseCode = connection.getResponseCode();
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                return "Failed to fetch sentiment data. HTTP Code: " + responseCode;
-            }
+            // Ajouter l'en-tête Authorization si nécessaire
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "Bearer " + API_KEY); // ou selon ce qui est requis par Finnhub
+            HttpEntity<String> entity = new HttpEntity<>(headers);
 
-            BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String inputLine;
-            while ((inputLine = in.readLine()) != null) {
-                response.append(inputLine);
-            }
-            in.close();
+            // Faire la requête GET avec les en-têtes appropriés
+            ResponseEntity<String> response = restTemplate.exchange(apiUrl, HttpMethod.GET, entity, String.class);
 
-            // Étape 2 : Convertir la réponse JSON en un objet exploitable
-            JSONObject sentimentData = new JSONObject(response.toString());
-            String sentimentJson = sentimentData.toString(4); // JSON formaté pour affichage
-
-            // Étape 3 : Extraire et analyser les éléments pertinents
-            double positiveScore = sentimentData.optDouble("positiveScore", 0.0);
-            double negativeScore = sentimentData.optDouble("negativeScore", 0.0);
-            double neutralScore = sentimentData.optDouble("neutralScore", 0.0);
-
-            // Appliquer une logique personnalisée d'interprétation
-            String sentimentAnalysis;
-            if (positiveScore > negativeScore && positiveScore > neutralScore) {
-                sentimentAnalysis = "Overall sentiment is positive with a score of " + positiveScore;
-            } else if (negativeScore > positiveScore && negativeScore > neutralScore) {
-                sentimentAnalysis = "Overall sentiment is negative with a score of " + negativeScore;
+            // Traitement de la réponse comme d'habitude
+            if (response.getStatusCode().is2xxSuccessful()) {
+                // Code d'analyse de la réponse
             } else {
-                sentimentAnalysis = "Overall sentiment is neutral with a score of " + neutralScore;
+                return "Failed to fetch sentiment data. HTTP Code: " + response.getStatusCodeValue();
             }
-
-            // Étape 4 : Retourner une réponse consolidée (brut JSON + analyse)
-            return "Sentiment Analysis for " + symbol + ":\n" +
-                    sentimentAnalysis + "\n\nRaw Sentiment Data:\n" + sentimentJson;
-
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
             return "Error during sentiment analysis: " + e.getMessage();
+        } catch (Exception e) {
+            return "An unexpected error occurred: " + e.getMessage();
+        }
+        return symbol;
+    }
+
+    private String getSentimentAnalysis(double positiveScore, double negativeScore, double neutralScore) {
+        if (positiveScore > negativeScore && positiveScore > neutralScore) {
+            return "Overall sentiment is positive with a score of " + positiveScore;
+        } else if (negativeScore > positiveScore && negativeScore > neutralScore) {
+            return "Overall sentiment is negative with a score of " + negativeScore;
+        } else {
+            return "Overall sentiment is neutral with a score of " + neutralScore;
         }
     }
 
@@ -252,41 +253,4 @@ public class AnalyseService {
         // Remplacez avec une bibliothèque NLP. Ici, un score aléatoire pour démonstration.
         return text.contains("good") ? 1.0 : text.contains("bad") ? -1.0 : 0.0;
     }
-
-
-    //
-public Map<String, Object> getCompanyBasicFinancialsAndSave(String symbol) {
-    RestTemplate restTemplate = new RestTemplate();
-    String url = FINNHUB_BASIC_FINANCIALS_URL.replace("{symbol}", symbol);
-    String response = restTemplate.getForObject(url, String.class);
-
-    // Convert the JSON response to a Map
-    JSONObject jsonResponse = new JSONObject(response);
-    Map<String, Object> financialData = jsonResponse.toMap();
-
-    // Save the financial data to a JSON file
-    saveFinancialsToJson(financialData, symbol);
-
-    // Return the financial data as a Map
-    return financialData;
-}
-
-    // Method to save financial data to JSON file
-    private void saveFinancialsToJson(Map<String, Object> financialData, String symbol) {
-        ObjectMapper mapper = new ObjectMapper();
-        // The file will be named with the symbol to track different companies
-        File file = new File("src/main/resources/static/data/" + symbol + "_financials.json");
-        try {
-            // Create the directory if necessary
-            if (!file.exists()) {
-                file.getParentFile().mkdirs();
-            }
-            // Write the data to the JSON file
-            mapper.writeValue(file, financialData);
-            System.out.println("Financial data saved to JSON for symbol: " + symbol);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
 }
