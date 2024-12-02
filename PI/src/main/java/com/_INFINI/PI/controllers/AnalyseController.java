@@ -2,6 +2,7 @@ package com._INFINI.PI.controllers;
 
 import com._INFINI.PI.services.AnalyseService;
 import lombok.RequiredArgsConstructor;
+import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -64,20 +65,11 @@ public class AnalyseController {
     public Map<String, Object> getBasicFinancials(@RequestParam String symbol) {
         return analyseService.getCompanyBasicFinancialsAndSave(symbol);
     }
-    // Endpoint combiné pour l'analyse sentimentale complète
-    @GetMapping("/sentiment-full")
-    public String getFullSentimentAnalysis(@RequestParam String symbol) {
-        return analyseService.analyzeStockSentiment(symbol);
-    }
+
     // Endpoint pour l'analyse sentimentale via Finnhub
     @GetMapping("/sentiment")
     public String getSentimentAnalysis(@RequestParam String symbol) {
-        return analyseService.getSentimentAnalysis(symbol);
+        return analyseService.getNewsSentiment(symbol);
     }
 
-    // Endpoint pour l'analyse personnalisée d'un texte
-    @PostMapping("/sentiment-custom")
-    public String performSentimentAnalysis(@RequestBody String text) {
-        return analyseService.performSentimentAnalysis(text);
-    }
 }
